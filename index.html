@@ -27,7 +27,7 @@ button.on{outline:3px solid var(--ac);outline-offset:2px}
 .out{white-space:pre-wrap;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:8px}
 .mut{color:var(--mut);font-size:14px}
 nav{display:flex;border-top:1px solid var(--bd);background:var(--card)}
-nav button{flex:1;background:none;color:var(--mut);border-radius:0;padding:10px 0;font-size:12px;font-weight:500}
+nav button{flex:1;background:none;color:var(--mut);border-radius:0;padding:10px 0;font-size:11px;font-weight:500}
 nav button.on{color:var(--ac);outline:0;font-weight:700}
 nav i{display:block;font-style:normal;font-size:20px}
 </style></head><body>
@@ -59,6 +59,13 @@ nav i{display:block;font-style:normal;font-size:20px}
  <div class="row"><button class="mic" data-for="vi" style="flex:1">🎤 Dictar</button><button class="g" id="vcopy">Copiar</button><button class="g" id="vread">Leer</button></div>
  <p class="mut" id="vmsg"></p>
 </section>
+<section id="t-ajustes">
+ <p class="mut">Pega tu clave gratuita de Gemini (aistudio.google.com/apikey). Se guarda solo en este teléfono.</p>
+ <div class="row"><input id="gk" type="password" placeholder="Tu clave de Gemini" autocomplete="off"></div>
+ <div class="row"><input id="gm" placeholder="Modelo"></div>
+ <div class="row"><button id="gsave" style="flex:1">Guardar</button></div>
+ <p class="mut" id="gmsg"></p>
+</section>
 </main>
 <nav>
  <button class="on" data-t="chat"><i>💬</i>Chat</button>
@@ -66,10 +73,12 @@ nav i{display:block;font-style:normal;font-size:20px}
  <button data-t="tareas"><i>✅</i>Tareas</button>
  <button data-t="video"><i>🎬</i>Videos</button>
  <button data-t="voz"><i>🎙️</i>Voz</button>
+ <button data-t="ajustes"><i>⚙️</i>Ajustes</button>
 </nav>
 <script>
 const $=s=>document.querySelector(s);
 const st={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const MODELO='gemini-3.8-flash';
 let sample=null,dict=null,target=null,listening=false;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
@@ -78,11 +87,24 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 function speak(t){try{if($('#vz').checked&&window.speechSynthesis){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='es-ES';speechSynthesis.speak(u)}}catch(e){}}
 function mkEl(cls,txt){const d=document.createElement('div');d.className=cls;d.textContent=txt;return d}
 // IA
-async function ai(prompt,onText){
- if(!sample)throw {code:'no_ia'};
- return sample(prompt,{cache:false,onText});
+async function gem(prompt,onText){
+ const k=st.get('gk','');if(!k)throw {code:'no_key'};
+ const msgs=typeof prompt==='string'?[{role:'user',content:prompt}]:prompt;
+ const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+ const model=st.get('gm',MODELO);
+ let r;
+ try{r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({contents})})}catch(e){throw {code:'red'}}
+ if(!r.ok)throw {code:r.status===429?'rate_limited':(r.status===400||r.status===401||r.status===403)?'clave':r.status===404?'modelo':'http'};
+ const j=await r.json();
+ const text=(((j.candidates||[])[0]||{}).content&&((j.candidates[0].content.parts)||[]).map(p=>p.text||'').join(''))||'(sin respuesta)';
+ if(onText)onText({text});
+ return {text};
 }
-function err(e){return e&&e.code==='no_ia'?'El chat con IA todavía no está conectado. Es el siguiente paso.':e&&e.code==='not_granted'?'Necesitas aceptar el permiso para usar la IA.':e&&e.code==='rate_limited'?'Demasiadas solicitudes, espera un momento.':'No pude responder, intenta de nuevo.'}
+async function ai(prompt,onText){
+ if(sample)return sample(prompt,{cache:false,onText});
+ return gem(prompt,onText);
+}
+function err(e){const c=e&&e.code;return c==='no_key'?'Falta tu clave de Gemini. Ve a Ajustes y pégala.':c==='clave'?'La clave no es válida. Revísala en Ajustes.':c==='modelo'?'Ese modelo no existe. Cambia el nombre en Ajustes (prueba gemini-2.5-flash).':c==='rate_limited'?'Demasiadas solicitudes, espera un momento.':c==='red'?'No hay conexión a internet.':c==='not_granted'?'Necesitas aceptar el permiso para usar la IA.':'No pude responder, intenta de nuevo.'}
 // Chat
 let hist=[];
 const SYS='Te llamas Nova y eres un asistente personal amable. Responde en español, claro y breve.';
@@ -122,6 +144,15 @@ document.querySelectorAll('.mic').forEach(b=>b.onclick=async()=>{
  if(!dict)return;
  try{if(listening){await dict.stop();return}target=$('#'+b.dataset.for);b.classList.add('on');await dict.start()}catch(e){b.classList.remove('on');$('#vmsg').textContent='No pude activar el micrófono.'}
 });
+// Ajustes
+$('#gm').value=st.get('gm',MODELO);
+if(st.get('gk',''))$('#gmsg').textContent='Ya hay una clave guardada. Pega otra solo si quieres cambiarla.';
+$('#gsave').onclick=()=>{
+ const k=$('#gk').value.trim(),m=$('#gm').value.trim()||MODELO;
+ if(k)st.set('gk',k);
+ st.set('gm',m);$('#gk').value='';
+ $('#gmsg').textContent=(k||st.get('gk',''))?'Guardado. Ya puedes usar el chat.':'Modelo guardado, pero falta la clave.';
+};
 // Render inicial y capacidades
 rNotas();rTareas();
 (async()=>{
