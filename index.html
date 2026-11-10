@@ -26,6 +26,7 @@ button.on{outline:3px solid var(--ac);outline-offset:2px}
 .x{background:none;color:var(--mut);padding:0 4px}
 .out{white-space:pre-wrap;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:8px}
 .mut{color:var(--mut);font-size:14px}
+.nt{color:var(--mut);font-size:12px;margin-top:6px}
 nav{display:flex;border-top:1px solid var(--bd);background:var(--card)}
 nav button{flex:1;background:none;color:var(--mut);border-radius:0;padding:10px 0;font-size:11px;font-weight:500}
 nav button.on{color:var(--ac);outline:0;font-weight:700}
@@ -60,9 +61,15 @@ nav i{display:block;font-style:normal;font-size:20px}
  <p class="mut" id="vmsg"></p>
 </section>
 <section id="t-ajustes">
- <p class="mut">Pega tu clave gratuita de Gemini (aistudio.google.com/apikey). Se guarda solo en este teléfono.</p>
- <div class="row"><input id="gk" type="password" placeholder="Tu clave de Gemini" autocomplete="off"></div>
- <div class="row"><input id="gm" placeholder="Modelo"></div>
+ <p class="mut">Gemini es la IA principal y Groq el respaldo. Las claves se guardan solo en este teléfono.</p>
+ <p class="mut">Gemini: aistudio.google.com/apikey</p>
+ <div class="row"><input id="gk" type="password" placeholder="Clave de Gemini" autocomplete="off"></div>
+ <div class="row"><input id="gm" placeholder="Modelo de Gemini"></div>
+ <div class="row"><button class="g" id="gmod" style="flex:1">Ver modelos disponibles</button></div>
+ <div id="mlist" class="mut"></div>
+ <p class="mut">Groq: console.groq.com</p>
+ <div class="row"><input id="qk" type="password" placeholder="Clave de Groq" autocomplete="off"></div>
+ <div class="row"><input id="qm" placeholder="Modelo de Groq"></div>
  <div class="row"><button id="gsave" style="flex:1">Guardar</button></div>
  <p class="mut" id="gmsg"></p>
 </section>
@@ -78,7 +85,7 @@ nav i{display:block;font-style:normal;font-size:20px}
 <script>
 const $=s=>document.querySelector(s);
 const st={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-const MODELO='gemini-3.8-flash';
+const MODELO='gemini-2.5-flash',MODQ='openai/gpt-oss-120b';
 let sample=null,dict=null,target=null,listening=false;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
@@ -87,24 +94,48 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 function speak(t){try{if($('#vz').checked&&window.speechSynthesis){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='es-ES';speechSynthesis.speak(u)}}catch(e){}}
 function mkEl(cls,txt){const d=document.createElement('div');d.className=cls;d.textContent=txt;return d}
 // IA
+async function f(url,opts){const c=new AbortController();const t=setTimeout(()=>c.abort(),25000);try{return await fetch(url,Object.assign({},opts,{signal:c.signal}))}finally{clearTimeout(t)}}
+function codigo(s){return s===429?'rate_limited':(s===400||s===401||s===403)?'clave':s===404?'modelo':'http'}
+async function fallo(r){let d='';try{const j=await r.json();d=(j.error&&(j.error.message||j.error))||''}catch(e){}return {code:codigo(r.status),status:r.status,detail:String(d).slice(0,180)}}
 async function gem(prompt,onText){
  const k=st.get('gk','');if(!k)throw {code:'no_key'};
  const msgs=typeof prompt==='string'?[{role:'user',content:prompt}]:prompt;
  const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
  const model=st.get('gm',MODELO);
  let r;
- try{r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({contents})})}catch(e){throw {code:'red'}}
- if(!r.ok)throw {code:r.status===429?'rate_limited':(r.status===400||r.status===401||r.status===403)?'clave':r.status===404?'modelo':'http'};
+ try{r=await f('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':k},body:JSON.stringify({contents})})}catch(e){throw {code:'red'}}
+ if(!r.ok)throw await fallo(r);
  const j=await r.json();
- const text=(((j.candidates||[])[0]||{}).content&&((j.candidates[0].content.parts)||[]).map(p=>p.text||'').join(''))||'(sin respuesta)';
+ const c=((j.candidates||[])[0]||{}).content||{};
+ const text=(c.parts||[]).map(p=>p.text||'').join('')||'(sin respuesta)';
  if(onText)onText({text});
- return {text};
+ return {text,prov:'gemini'};
+}
+async function groq(prompt,onText){
+ const k=st.get('qk','');if(!k)throw {code:'no_key'};
+ const msgs=typeof prompt==='string'?[{role:'user',content:prompt}]:prompt;
+ let r;
+ try{r=await f('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+k},body:JSON.stringify({model:st.get('qm',MODQ),messages:msgs})})}catch(e){throw {code:'red'}}
+ if(!r.ok)throw await fallo(r);
+ const j=await r.json();
+ const text=(((j.choices||[])[0]||{}).message||{}).content||'(sin respuesta)';
+ if(onText)onText({text});
+ return {text,prov:'groq'};
 }
 async function ai(prompt,onText){
  if(sample)return sample(prompt,{cache:false,onText});
- return gem(prompt,onText);
+ const gk=st.get('gk',''),qk=st.get('qk','');
+ if(!gk&&!qk)throw {code:'no_key'};
+ if(gk){try{return await gem(prompt,onText)}catch(e){if(!qk)throw e}}
+ return groq(prompt,onText);
 }
-function err(e){const c=e&&e.code;return c==='no_key'?'Falta tu clave de Gemini. Ve a Ajustes y pégala.':c==='clave'?'La clave no es válida. Revísala en Ajustes.':c==='modelo'?'Ese modelo no existe. Cambia el nombre en Ajustes (prueba gemini-2.5-flash).':c==='rate_limited'?'Demasiadas solicitudes, espera un momento.':c==='red'?'No hay conexión a internet.':c==='not_granted'?'Necesitas aceptar el permiso para usar la IA.':'No pude responder, intenta de nuevo.'}
+function err(e){
+ const c=e&&e.code;
+ let m=c==='no_key'?'Falta tu clave. Ve a Ajustes y pega la de Gemini o la de Groq.':c==='clave'?'Una clave no es válida. Revísala en Ajustes.':c==='modelo'?'Ese modelo no está disponible para tu clave. Usa "Ver modelos disponibles" en Ajustes.':c==='rate_limited'?'Demasiadas solicitudes, espera un momento.':c==='red'?'No hubo respuesta a tiempo o no hay conexión.':c==='not_granted'?'Necesitas aceptar el permiso para usar la IA.':'No pude responder, intenta de nuevo.';
+ if(e&&e.detail)m+='\n\nDetalle: '+e.detail;
+ return m;
+}
+function nota(el,r){if(r&&r.prov==='groq'){const s=document.createElement('div');s.className='nt';s.textContent='Respondió Groq (respaldo)';el.appendChild(s)}}
 // Chat
 let hist=[];
 const SYS='Te llamas Nova y eres un asistente personal amable. Responde en español, claro y breve.';
@@ -116,7 +147,7 @@ async function send(){
   let m=hist.slice(-10);if(m[0].role==='assistant')m=m.slice(1);
   m=m.map((x,i)=>i===0?{role:x.role,content:SYS+'\n\n'+x.content}:x);
   const r=await ai(m,({text})=>{el.textContent=text});
-  el.textContent=r.text;hist.push({role:'assistant',content:r.text});speak(r.text);
+  el.textContent=r.text;nota(el,r);hist.push({role:'assistant',content:r.text});speak(r.text);
  }catch(e){el.textContent=err(e);hist.pop()}
  el.scrollIntoView({block:'end'});
 }
@@ -135,7 +166,7 @@ $('#vgo').onclick=async()=>{
  const tema=$('#vt').value.trim();if(!tema)return;
  const o=$('#vo');o.textContent='';const el=mkEl('out','Pensando ideas…');o.appendChild(el);
  const p='Genera 3 ideas de video corto para '+$('#vp').value+' sobre: '+tema+'. Para cada una: título, gancho de los primeros 3 segundos, guion en 4 pasos y 5 hashtags. Deben poder grabarse solo con un celular, sin presupuesto. Responde en español, sin formato markdown.';
- try{const r=await ai(p,({text})=>{el.textContent=text});el.textContent=r.text}catch(e){el.textContent=err(e)}
+ try{const r=await ai(p,({text})=>{el.textContent=text});el.textContent=r.text;nota(el,r)}catch(e){el.textContent=err(e)}
 };
 // Voz
 $('#vcopy').onclick=async()=>{try{await navigator.clipboard.writeText($('#vi').value);$('#vmsg').textContent='Copiado.'}catch(e){$('#vmsg').textContent='No pude copiar, selecciona el texto manualmente.'}};
@@ -146,12 +177,31 @@ document.querySelectorAll('.mic').forEach(b=>b.onclick=async()=>{
 });
 // Ajustes
 $('#gm').value=st.get('gm',MODELO);
-if(st.get('gk',''))$('#gmsg').textContent='Ya hay una clave guardada. Pega otra solo si quieres cambiarla.';
+$('#qm').value=st.get('qm',MODQ);
+function estado(){const g=st.get('gk',''),q=st.get('qk','');$('#gmsg').textContent=g&&q?'Gemini principal y Groq de respaldo, listos.':g?'Solo Gemini guardada. Añade Groq para tener respaldo.':q?'Solo Groq guardada. Añade Gemini como principal.':'Falta al menos una clave.'}
+estado();
 $('#gsave').onclick=()=>{
- const k=$('#gk').value.trim(),m=$('#gm').value.trim()||MODELO;
- if(k)st.set('gk',k);
- st.set('gm',m);$('#gk').value='';
- $('#gmsg').textContent=(k||st.get('gk',''))?'Guardado. Ya puedes usar el chat.':'Modelo guardado, pero falta la clave.';
+ const k=$('#gk').value.trim(),q=$('#qk').value.trim();
+ if(k)st.set('gk',k);if(q)st.set('qk',q);
+ st.set('gm',$('#gm').value.trim()||MODELO);st.set('qm',$('#qm').value.trim()||MODQ);
+ $('#gk').value='';$('#qk').value='';
+ estado();
+};
+$('#gmod').onclick=async()=>{
+ const k=$('#gk').value.trim()||st.get('gk','');const o=$('#mlist');
+ if(!k){o.textContent='Pega y guarda primero tu clave de Gemini.';return}
+ o.textContent='Consultando a Google…';
+ try{
+  const r=await f('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:{'x-goog-api-key':k}});
+  if(!r.ok){const e=await fallo(r);o.textContent='Google respondió error '+r.status+'. '+(e.detail||'');return}
+  const j=await r.json();
+  const l=(j.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/gemini/.test(m.name)).map(m=>m.name.replace('models/',''));
+  o.textContent='';
+  if(!l.length){o.textContent='No encontré modelos para tu clave.';return}
+  o.appendChild(document.createTextNode('Toca uno para elegirlo:'));
+  o.appendChild(document.createElement('br'));
+  l.forEach(n=>{const b=document.createElement('button');b.className='g';b.style.cssText='margin:4px 4px 0 0;font-size:13px;padding:8px 10px';b.textContent=n;b.onclick=()=>{$('#gm').value=n;st.set('gm',n);$('#gmsg').textContent='Modelo elegido y guardado: '+n};o.appendChild(b)});
+ }catch(e){o.textContent='No pude consultar. Revisa tu internet.'}
 };
 // Render inicial y capacidades
 rNotas();rTareas();
